@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.UUID;
 
 import org.apache.cordova.BuildHelper;
 import org.apache.cordova.CallbackContext;
@@ -65,6 +66,7 @@ import android.support.v4.content.FileProvider;
 import android.util.Base64;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.util.Log;
 
 /**
  * This class launches the camera view, allows the user to take a picture, closes the camera view,
@@ -72,7 +74,8 @@ import android.content.pm.PackageManager.NameNotFoundException;
  * the camera view was shown is redisplayed.
  */
 public class CameraLauncher extends CordovaPlugin implements MediaScannerConnectionClient {
-
+  private static final String SD_PATH = "/sdcard/dskqxt/pic/";
+  private static final String IN_PATH = "/dskqxt/pic/";
     private static final int DATA_URL = 0;              // Return base64 encoded string
     private static final int FILE_URI = 1;              // Return file uri (content://media/external/images/media/2 for Android)
     private static final int NATIVE_URI = 2;                    // On Android, this is the same as FILE_URI
@@ -456,7 +459,98 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
       }
     }
   }
+  /**
+   * 随机生产文件名
+   *
+   * @return
+   */
+  private static String generateFileName() {
+    return UUID.randomUUID().toString();
+  }
+  /**
+   * 保存bitmap到本地
+   *
+   * @param context
+   * @param mBitmap
+   * @return
+   */
+  public static String saveBitmap(Context context, Bitmap mBitmap) {
+    String savePath;
+    File filePic;
+    if (Environment.getExternalStorageState().equals(
+      Environment.MEDIA_MOUNTED)) {
+      savePath = SD_PATH;
+    } else {
+      savePath = context.getApplicationContext().getFilesDir()
+        .getAbsolutePath()
+        + IN_PATH;
+    }
+    try {
+      filePic = new File(savePath + generateFileName() + ".jpg");
+      if (!filePic.exists()) {
+        filePic.getParentFile().mkdirs();
+        filePic.createNewFile();
+      }
+      FileOutputStream fos = new FileOutputStream(filePic);
+      mBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos);
+      fos.flush();
+      fos.close();
+    } catch (IOException e) {
+      // TODO Auto-generated catch block
+      e.printStackTrace();
+      return null;
+    }
 
+    return filePic.getAbsolutePath();}
+  /*
+  * 旋转bitmap*/
+  public  Bitmap toturn(Bitmap img,int degree){
+    Matrix matrix = new Matrix();
+    matrix.postRotate(+degree); /*翻转90度*/
+    int width = img.getWidth();
+    int height =img.getHeight();
+    img = Bitmap.createBitmap(img, 0, 0, width, height, matrix, true);
+    return img;
+  }
+
+
+  /*
+  * 根据uri获得bitmap*/
+  private Bitmap getBitmapFromUri(Uri uri) {
+    try {
+      // 读取uri所在的图片
+      Bitmap bitmap = MediaStore.Images.Media.getBitmap(this.cordova.getActivity().getContentResolver(), uri);
+      return bitmap;
+    } catch (Exception e) {
+      Log.e("[Android]", e.getMessage());
+      Log.e("[Android]", "目录为：" + uri);
+      e.printStackTrace();
+      return null;
+    }
+  }
+  /*
+  * 获取旋转角度*/
+  public  int readPictureDegree(String path) {
+    int degree = 0;
+    try {
+      ExifInterface exifInterface = new ExifInterface(path);
+      int orientation = exifInterface.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+      switch (orientation) {
+        case ExifInterface.ORIENTATION_ROTATE_90:
+          degree = 90;
+          break;
+        case ExifInterface.ORIENTATION_ROTATE_180:
+          degree = 180;
+          break;
+        case ExifInterface.ORIENTATION_ROTATE_270:
+          degree = 270;
+          break;
+      }
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+    return degree;
+  }
     /**
      * Applies all needed transformation to the image received from the camera.
      *
@@ -472,15 +566,12 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         String sourcePath = (this.allowEdit && this.croppedUri != null) ?
                 FileHelper.stripFileProtocol(this.croppedUri.toString()) :
                 this.imageUri.getFilePath();
-
-
         if (this.encodingType == JPEG) {
             try {
                 //We don't support PNG, so let's not pretend we do
                 exif.createInFile(sourcePath);
                 exif.readExifData();
                 rotate = exif.getOrientation();
-
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -545,12 +636,15 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
                     if (this.allowEdit && this.croppedUri != null) {
                         Uri croppedUri = Uri.fromFile(new File(getFileNameFromUri(this.croppedUri)));
                         writeUncompressedImage(croppedUri, uri);
+                      this.callbackContext.success(uri.toString());
                     } else {
                         Uri imageUri = this.imageUri.getFileUri();
-                        writeUncompressedImage(imageUri, uri);
+                      Bitmap bitmap1=toturn(getBitmapFromUri(imageUri),rotate);
+                      Uri uri1 = Uri.parse(saveBitmap(this.cordova.getActivity(),bitmap1));
+                      Uri uri2 = Uri.fromFile(createCaptureFile(this.encodingType, System.currentTimeMillis() + ""));
+                      writeUncompressedImage(uri1, uri2);
+                      this.callbackContext.success(uri2.toString());
                     }
-
-                    this.callbackContext.success(uri.toString());
                 }
             } else {
                 Uri uri = Uri.fromFile(createCaptureFile(this.encodingType, System.currentTimeMillis() + ""));
@@ -940,10 +1034,12 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
             Bitmap image = null;
             try {
                 fileStream = FileHelper.getInputStreamFromUriString(imageUrl, cordova);
+
                 image = BitmapFactory.decodeStream(fileStream);
             } finally {
                 if (fileStream != null) {
                     try {
+
                         fileStream.close();
                     } catch (IOException e) {
                         LOG.d(LOG_TAG, "Exception while closing file input stream.");
